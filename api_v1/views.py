@@ -1,11 +1,14 @@
-from django.contrib.auth.models import User
+from django.contrib.auth import get_user_model
+from django.db.models import Count
 
-from rest_framework import viewsets, permissions
+from rest_framework import permissions, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from .models import Post
-from .serializers import UserSerializer, PostSerializer
+from .models import Like, Post
+from .serializers import PostSerializer, UserSerializer
+
+User = get_user_model()
 
 
 class UserViewSet(viewsets.ModelViewSet):
@@ -14,37 +17,25 @@ class UserViewSet(viewsets.ModelViewSet):
 
 
 class PostViewSet(viewsets.ModelViewSet):
-    queryset = Post.objects.all()
     serializer_class = PostSerializer
     permission_classes = [permissions.IsAuthenticated]
 
-    @action(methods=['post'], detail=True)
-    def like(self, request, *args, **kwargs):
-        """
-        Like post action.
-        """
-        post = self.get_object()
-
-        post.likes_counter += 1
-        post.save()
-
-        serializer = PostSerializer(post, context={'request': request})
-        return Response(serializer.data)
-
-    @action(methods=['post'], detail=True)
-    def dislike(self, request, *args, **kwargs):
-        """
-        Dislike post action.
-        """
-        post = self.get_object()
-
-        if post.likes_counter > 0:
-            post.likes_counter -= 1
-            post.save()
-
-        serializer = PostSerializer(post, context={'request': request})
-        return Response(serializer.data)
+    def get_queryset(self):
+        return Post.objects.annotate(likes_count=Count('likes'))
 
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
 
+    @action(methods=['post'], detail=True)
+    def like(self, request, *args, **kwargs):
+        post = self.get_object()
+        Like.objects.get_or_create(user=request.user, post=post)
+        post = self.get_queryset().get(pk=post.pk)
+        return Response(self.get_serializer(post).data)
+
+    @action(methods=['post'], detail=True)
+    def dislike(self, request, *args, **kwargs):
+        post = self.get_object()
+        Like.objects.filter(user=request.user, post=post).delete()
+        post = self.get_queryset().get(pk=post.pk)
+        return Response(self.get_serializer(post).data)

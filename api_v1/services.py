@@ -1,82 +1,40 @@
-from pip import logger
+"""Thin wrappers around third-party email-intelligence APIs."""
+import logging
 
-import clearbit
-from email_hunter import EmailHunterClient
+import requests
 
-from .settings import EMAIL_HUNTER_KEY, CLEARBIT_KEY
+from .settings import HUNTER_API_KEY
 
-# initializing 3rd party clients
-clearbit.key = CLEARBIT_KEY
-email_hunter_client = EmailHunterClient(EMAIL_HUNTER_KEY)
+logger = logging.getLogger(__name__)
+
+HUNTER_VERIFIER_URL = 'https://api.hunter.io/v2/email-verifier'
 
 
-def get_user_extra_info(email):
+def get_user_extra_info(email: str) -> dict:
+    """Enrich a user profile via Clearbit. Disabled — kept as integration stub."""
+    # Clearbit signup is gated to US citizens with phone verification, so the
+    # live call is not wired in. Return empty to keep callers safe.
+    return {}
+
+
+def verify_user_email(email: str) -> bool:
+    """Return True when the email is deliverable per Hunter.io.
+
+    Falls open (returns True) when no API key is configured or the call fails —
+    a registration-time check shouldn't block signup on a third-party outage.
     """
-    This function should expand user's profile by info provided from clearbit.com
-    Registration available only for US citizens.
-    Getting sign up error "For security reasons, we need to confirm your phone number."
-    """
-    data = {}
-    # response = clearbit.Enrichment.find(email=email, stream=True)
-
-    # making stub intentionally
-    response = {}
-
-    if 'person' in response:
-        data = {
-            'first_name': response['person']['name']['givenName'],
-            'last_name': response['person']['name']['familyName']
-        }
-
-    return data
-
-
-def verify_user_email(email) -> bool:
-    """
-    Checks email address for existence
-    :param email: Email for existence verification in "Email Hunter" service
-    :return: Boolean
-    """
-    exists = False
+    if not HUNTER_API_KEY:
+        return True
 
     try:
-        # Check if a given email address is deliverable and has been found on the internet.
-        # I've chosen this method because there was no explicit requirements about verification in
-        # task description.
-        exists = _user_email_deliverable(email)
-
-        # Checks for existence in Email Hunter database.
-        # Don't think this is what we need.
-        # exists = _user_email_exists(email)
-    except Exception as e:
-        logger.error(f"Email verification with Email Hunter service failed. {e.args[-1]}")
-
-    return exists
-
-
-def _user_email_exists(email) -> bool:
-    """
-    Check for existence in Email Hunter database
-    :param email: Email
-    :return: Boolean
-    """
-    return email_hunter_client.exist(email)[0]
-
-
-def _user_email_deliverable(email) -> bool:
-    """
-    Check is email address deliverable
-    :param email: Email
-    :return: Boolean
-    """
-    exists = False
-    response = email_hunter_client.verify(email)
-    response = dict(response)
-
-    if response.get('smtp_server') and response.get('smtp_check'):
-        exists = True
-
-    return exists
-
-
-
+        response = requests.get(
+            HUNTER_VERIFIER_URL,
+            params={'email': email, 'api_key': HUNTER_API_KEY},
+            timeout=5,
+        )
+        response.raise_for_status()
+        data = response.json().get('data', {})
+        return data.get('status') == 'valid' or data.get('result') == 'deliverable'
+    except requests.RequestException as exc:
+        logger.warning("Hunter.io verification failed for %s: %s", email, exc)
+        return True
